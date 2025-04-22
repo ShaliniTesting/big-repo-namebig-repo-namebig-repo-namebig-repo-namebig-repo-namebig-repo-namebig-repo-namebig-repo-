@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # The Node.js Hello World application container
+  app:
+    build:
+      context: ../src/backend
+      dockerfile: ../infrastructure/Dockerfile
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/hello"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - app-network
+
+  # Nginx reverse proxy container (optional for production-like setup)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  # Internal network for communication between containers
+  app-network:
+    driver: bridge
+
+# Deployment Profiles:
+# - Development: docker-compose up app
+# - Production: docker-compose up -d
+#
+# Resource Requirements:
+# Minimal:
+#   - CPU: 0.5 vCPU
+#   - Memory: 256MB
+#   - Disk: 100MB
+# Recommended:
+#   - CPU: 1 vCPU
+#   - Memory: 512MB
+#   - Disk: 1GB
