@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS CloudFormation template for deploying the Node.js Hello World application.'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Description: An environment name that will be prefixed to resource names
+    Default: dev
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID
+  
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID
+  
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group ID
+  
+  KeyName:
+    Type: AWS::EC2::KeyPair::Name
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+  
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+    ConstraintDescription: must be a valid EC2 instance type.
+  
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: AMI ID for the EC2 instance
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      ImageId: !Ref AmiId
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref EnvironmentName, 'hello-world-instance']]
+      UserData:
+        Fn::Base64:
+          !Join
+            - ''
+            - - |
+                #!/bin/bash -xe
+                # Update system packages
+                yum update -y
+                
+                # Install Node.js
+                yum install -y nodejs
+                
+                # Create app directory
+                mkdir -p /app
+                cd /app
+                
+                # Create package.json
+                cat > package.json << 'EOL'
+                {
+                  "name": "hello-world-app",
+                  "version": "1.0.0",
+                  "description": "Simple Node.js Hello World application",
+                  "main": "index.js",
+                  "scripts": {
+                    "start": "node index.js"
+                  },
+                  "author": "",
+                  "license": "ISC"
+                }
+                EOL
+                
+                # Create index.js
+                cat > index.js << 'EOL'
+                const http = require('http');
+                
+                // Configuration
+                const config = {
+                  port: process.env.PORT || 3000,
+                  host: process.env.HOST || '0.0.0.0'  // Use 0.0.0.0 to accept connections from any IP
+                };
+                
+                // Create HTTP server
+                const server = http.createServer((req, res) => {
+                  const url = req.url;
+                  
+                  if (url === '/hello') {
+                    res.writeHead(200, { 'Content-Type': 'text/plain' });
+                    res.end('Hello world');
+                  } else {
+                    res.writeHead(404, { 'Content-Type': 'text/plain' });
+                    res.end('Not Found');
+                  }
+                });
+                
+                // Start server
+                server.listen(config.port, config.host, () => {
+                  console.log(`Server running at http://${config.host}:${config.port}/`);
+                  console.log('Access the hello endpoint at /hello');
+                });
+                
+                // Handle graceful shutdown
+                process.on('SIGTERM', () => {
+                  console.log('SIGTERM signal received, shutting down gracefully');
+                  server.close(() => {
+                    console.log('Server closed');
+                    process.exit(0);
+                  });
+                });
+                EOL
+                
+                # Install PM2 to manage the Node.js process
+                npm install -g pm2
+                
+                # Start the application using PM2
+                pm2 start index.js --name "hello-world-app"
+                
+                # Configure PM2 to start on system boot
+                pm2 startup
+                pm2 save
+
+  EC2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join ['-', [!Ref EnvironmentName, 'hello-world-sg']]
+      GroupDescription: Enable HTTP access via port 3000 and SSH on port 22
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP access to the Node.js application
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH access to the instance
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref EnvironmentName, 'hello-world-sg']]
+
+Outputs:
+  InstancePublicIp:
+    Description: Public IP address of the newly created EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
+  
+  HelloWorldEndpoint:
+    Description: URL for the Hello World endpoint
+    Value: !Join ['', ['http://', !GetAtt EC2Instance.PublicIp, ':3000/hello']]
